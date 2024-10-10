@@ -1,0 +1,80 @@
+name: Hprofile Actions
+on: [push, workflow_dispatch]
+
+jobs:
+  Testing:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Code checkout
+        uses: actions/checkout@v4
+
+      - name: Maven test
+        run: mvn test
+
+      - name: Checkstyle
+        run: mvn checkstyle:checkstyle
+
+      # SetupsS java 11 to be default (sonar-scanner requirement asv of 5.x)
+      - name: Set Java 11
+        uses: actions/setup-java@v3
+        with:
+         distribution: 'temurin' # See 'Supported distributions' for available options
+         java-version: '11'
+
+    # Setup sonar-scanner
+      - name: Setup SonarQube
+        uses: warchant/setup-sonar-scanner@v7
+   
+    # Run sonar-scanner
+      - name: SonarQube Scan
+        run: |
+         sonar-scanner -X \
+          -Dsonar.host.url=${{ secrets.SONAR_URL }} \
+          -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+          -Dsonar.organization=${{ secrets.SONAR_ORGANIZATION }} \
+          -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }} \
+          -Dsonar.sources=src/ \
+          -Dsonar.junit.reportsPath=target/surefire-reports/ \
+          -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+          -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml \
+          -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/
+      - name: SonarQube Quality Gate check
+        id: sonarqube-quality-gate-check
+        uses: sonarsource/sonarqube-quality-gate-action@master
+          # Forced to fail step after specific time.
+        timeout-minutes: 5
+        env:
+           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }} #OPTIONAL
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+             username: ${{ secrets.DOCKERHUB_USERNAME }}
+             password: ${{ secrets.DOCKERHUB_TOKEN }}
+         
+      -  name: Set up Docker Buildx
+         uses: docker/setup-buildx-action@v3
+                    
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+         push: true
+         tags: docker.io/fazelshah/clockbox:${{ github.run_number }}
+      - name: Deploy to Server
+        uses: appleboy/ssh-action@v0.1.5
+        with:
+               host: ${{ secrets.SSH_HOST }}
+               username: ${{ secrets.SSH_USER }}
+               key: ${{ secrets.SSH_KEY }}
+               script: |
+                 docker login -u fazelshah -p ${{ secrets.DOCKERHUB_TOKEN }}
+                 docker pull docker.io/fazelshah/clockbox:${{ github.run_number }}
+                 docker stop clockbox || true  # Stop the existing container if it exists
+                 docker rm clockbox || true  # Remove the existing container if it exists
+                 docker run -d --name demo-app -p 80:80 docker.io/fazelshahclockbox/:${{ github.run_number }}
+
+             
+           
+             
+
+
